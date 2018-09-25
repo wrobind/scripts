@@ -2,6 +2,7 @@
 
 # convert VCF contacts file to CSV format file, listing labels as first line of CSV
 
+import collections
 import re
 import vobject
 import csv
@@ -19,26 +20,41 @@ org_federal_seat = re.compile(r'(' + '|'.join(states) + r')[ -]+(\d+|S|G|AG)+', 
 org_state_seat = re.compile(r'(' + '|'.join(states) + r') ([hs]-\d+)', re.IGNORECASE)
 seat_safety = re.compile(r'(safe)([DR])?\b', re.IGNORECASE)
 
-note_contribution = re.compile(r'\b(\d{4}-\d{2}-\d{2}\s+#\d+\s\$[0-9,.]+\b)+')
+pat_date = r'^(.*\b\d{4}[/-]\d{1,2}[/-]\d{1,2}.*?)$'
+dated_line = re.compile(pat_date, re.IGNORECASE|re.MULTILINE)
 
 
-with open(infile) as inf:
-	contacts = vobject.readComponents(inf.read())
-	inf.close()
+fieldnames = ['ST', 'DIST', 'LEVEL', 'SAFE', 'DONATIONS', 'FAMILY', 'GIVEN', 'COMPANY', 'NOTE', 'ADDRESS']
 
-
-fieldnames = ['ST', 'DIST', 'LEVEL', 'SAFE', 'CONTRIBS', 'FAMILY', 'GIVEN', 'FULLNAME', 'NOTE', 'DETAIL', 'ADDRESS', 'EMAIL', 'URL']
+fieldcounts = collections.Counter(fieldnames)
 
 records = []
+with open(infile, 'r') as inf:
+	contacts = vobject.readComponents(inf.read())
+
 for contact in contacts:
+	# first VCard in Apple AB export has no Formatted Name
+	#   and is not a contact
 	if 'fn' not in contact.contents:
 		continue
 
 	record = {}
 	record['LEVEL'] = 'UNKN'
 
+	# Family and given names are in the 'N' field of the contact card
+	if 'n' in contact.contents:
+		record['GIVEN'] = contact.n.value.given
+		record['FAMILY'] = contact.n.value.family
+
+	if 'note' in contact.contents:
+		record['NOTE'] = contact.note.value
+
+	if 'adr' in contact.contents:
+		record['ADDRESS'] = contact.adr.value
+
 	if 'org' in contact.contents:
-		m = org_federal_seat.match(contact.org.value[0])
+		record['COMPANY'] = contact.org.value[0]
+		m = org_federal_seat.match(record['COMPANY'])
 		if m is not None:
 			record['LEVEL'] = 'FEDERAL'
 			record['ST'] = m.group(1).upper()
@@ -55,7 +71,6 @@ for contact in contacts:
 				record['SAFE'] = m.group(2).upper()
 			else:
 				record['SAFE'] = 'U'
-		record['DETAIL'] = ';'.join(contact.org.value)
 
 	if 'note' in contact.contents:
 		if 'SAFE' not in record or record['SAFE'] == 'U':
@@ -65,25 +80,16 @@ for contact in contacts:
 					record['SAFE'] = m.group(2).upper()
 				else:
 					record['SAFE'] = 'U'
-		m = note_contribution.findall(contact.note.value)
-		if m is not None:
-			record['CONTRIBS'] = '@'.join(m)
-		record['NOTE'] = contact.note.value
+		checks = dated_line.findall(contact.note.value)
+		if checks is not None:
+			record['DONATIONS'] = '\r'.join(checks)
 
+	records.append(record)
+	for f in fieldnames:
+		if f in record:
+			fieldcounts[f] += 1
 
-	if 'n' in contact.contents:
-		record['GIVEN'] = contact.n.value.given
-		record['FAMILY'] = contact.n.value.family
-		record['FULLNAME'] = contact.n.value
-	if 'adr' in contact.contents:
-		record['ADDRESS'] = contact.adr.value
-	# if 'email' in contact.contents:
-		# record['EMAIL'] = contact.email.value
-	if 'url' in contact.contents:
-		record['URL'] = contact.url.value
-
-	records.append(record)	
-
+records.append(fieldcounts)
 
 with open(outfile, 'w', newline='') as csvfile:
 	writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
