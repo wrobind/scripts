@@ -9,8 +9,8 @@ import csv
 
 # for development purposes, static file name
 
-infile = 'foo.vcf'
-outfile = 'bar.csv'
+infile = 'Nelson2018-08.vcf'
+outfile = 'Nelson2018-08.csv'
 
 # political taxonomy
 
@@ -21,10 +21,10 @@ org_state_seat = re.compile(r'(' + '|'.join(states) + r') ([hs]-\d+)', re.IGNORE
 seat_safety = re.compile(r'(safe)([DR])?\b', re.IGNORECASE)
 
 pat_date = r'^(.*\b\d{4}[/-]\d{1,2}[/-]\d{1,2}.*?)$'
-dated_line = re.compile(pat_date, re.IGNORECASE|re.MULTILINE)
+date_pattern = re.compile(pat_date, re.IGNORECASE|re.MULTILINE)
 
 
-fieldnames = ['ST', 'DIST', 'LEVEL', 'SAFE', 'DONATIONS', 'FAMILY', 'GIVEN', 'COMPANY', 'NOTE', 'ADDRESS']
+fieldnames = ['contacts_check', 'contacts_amount', 'contacts_donations', 'FAMILY', 'ST', 'DIST']
 
 fieldcounts = collections.Counter(fieldnames)
 
@@ -39,57 +39,37 @@ for contact in contacts:
 		continue
 
 	record = {}
-	record['LEVEL'] = 'UNKN'
 
 	# Family and given names are in the 'N' field of the contact card
 	if 'n' in contact.contents:
-		record['GIVEN'] = contact.n.value.given
 		record['FAMILY'] = contact.n.value.family
 
-	if 'note' in contact.contents:
-		record['NOTE'] = contact.note.value
-
-	if 'adr' in contact.contents:
-		record['ADDRESS'] = contact.adr.value
 
 	if 'org' in contact.contents:
-		record['COMPANY'] = contact.org.value[0]
-		m = org_federal_seat.match(record['COMPANY'])
+		m = org_federal_seat.match(contact.org.value[0])
 		if m is not None:
-			record['LEVEL'] = 'FEDERAL'
 			record['ST'] = m.group(1).upper()
 			record['DIST'] = m.group(2).upper()
 		else:
 			m = org_state_seat.match(contact.org.value[0])
 			if m is not None:
-				record['LEVEL'] = 'STATE'
 				record['ST'] = m.group(1).upper()
 				record['DIST'] = m.group(2).upper()
-		m = seat_safety.search(contact.org.value[0])
-		if m is not None:
-			if m.group(2) is not None:
-				record['SAFE'] = m.group(2).upper()
-			else:
-				record['SAFE'] = 'U'
 
 	if 'note' in contact.contents:
-		if 'SAFE' not in record or record['SAFE'] == 'U':
-			m = seat_safety.search(contact.note.value)
-			if m is not None:
-				if m.group(2) is not None:
-					record['SAFE'] = m.group(2).upper()
-				else:
-					record['SAFE'] = 'U'
-		checks = dated_line.findall(contact.note.value)
-		if checks is not None:
-			record['DONATIONS'] = '\r'.join(checks)
+		date_items = date_pattern.findall(contact.note.value)
+		if date_items is not None:
+			record['contacts_donations'] = '\r'.join(date_items)
+			for date_item in date_items[1:]:
+				check = re.search(r'(#?|[^/-])(\d{4})[^/-]', date_item)
+				if check is not None:
+					record['contacts_check'] = check[2]
+				amount = re.search(r'-?\$[0-9,.]+\b', date_item)
+				if amount is not None:
+					record['contacts_amount'] = amount[0]
 
 	records.append(record)
-	for f in fieldnames:
-		if f in record:
-			fieldcounts[f] += 1
 
-records.append(fieldcounts)
 
 with open(outfile, 'w', newline='') as csvfile:
 	writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
